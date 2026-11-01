@@ -30,7 +30,7 @@ export function nextMeeting(b,now=new Date()) {
  }
  throw Error('Unable to calculate the next meeting.');
 }
-export function compatible(u,b){if(b.gender!==u.gender||b.language!==u.language)return false;if(u.format!=='Either'&&u.format!==b.format)return false;if(b.format==='In person'&&(!Number.isFinite(u.lat)||!Number.isFinite(u.lon)||distance(u,b)>u.radius))return false;const zone=u.zone||'America/Edmonton';const p=new Intl.DateTimeFormat('en-US',{timeZone:zone,weekday:'long',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(nextMeeting(b));const get=k=>p.find(x=>x.type===k).value;return u.slots.includes(`${get('weekday')} ${get('hour')}:${get('minute')}`);}
+export function compatible(u,b){if(b.gender!==u.gender||b.language!==u.language)return false;const online=b.format==='Online'||b.format==='Hybrid',inPerson=b.format==='In person'||b.format==='Hybrid';if(u.format==='Online'&&!online||u.format==='In person'&&!inPerson||u.format==='Hybrid'&&b.format!=='Hybrid')return false;if((!online||u.format==='In person')&&(!Number.isFinite(u.lat)||!Number.isFinite(u.lon)||distance(u,b)>u.radius))return false;const zone=u.zone||'America/Edmonton';const p=new Intl.DateTimeFormat('en-US',{timeZone:zone,weekday:'long',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(nextMeeting(b));const get=k=>p.find(x=>x.type===k).value;return u.slots.includes(`${get('weekday')} ${get('hour')}:${get('minute')}`);}
 export const occupied=(s,b)=>b.members.length+s.requests.filter(r=>r.band===b.id&&r.status==='offered').length;
 export function eligible(s,u,b){return b.approved&&b.open&&occupied(s,b)<5&&!b.members.some(m=>m.email===u.email)&&!s.requests.some(r=>r.email===u.email&&r.band===b.id&&['host-declined','declined','unsuitable','left'].includes(r.status))&&compatible(u,b);}
 export function match(s,u){if(s.bands.some(b=>b.members.some(m=>m.email===u.email))||s.requests.some(r=>r.email===u.email&&['review','offered'].includes(r.status)))return null;const b=s.bands.filter(b=>eligible(s,u,b)).sort((a,b)=>a.created.localeCompare(b.created))[0];if(!b)return null;const r={id:uid(),band:b.id,email:u.email,name:u.name,profile:structuredClone(u),status:'review',created:new Date().toISOString()};s.requests.push(r);return r;}
@@ -52,4 +52,12 @@ export function scheduleValues(day,time,firstDate='',zone='America/Edmonton',now
   if(firstDate<get('year')+'-'+get('month')+'-'+get('day'))throw Error('Choose today or a future first meeting date.');
  }
  return {slot:day+' '+time,firstDate};
+}
+
+export function meetingDetails(format,location='',link=''){
+ if(!['In person','Online','Hybrid'].includes(format))throw Error('Choose In-person, Online or Hybrid.');
+ location=String(location).trim();link=String(link).trim();
+ if(format!=='Online'&&!location)throw Error('Add a private meeting location for an in-person or hybrid Band.');
+ if(link){try{const url=new URL(link);if(url.protocol!=='https:')throw Error();}catch{throw Error('Use a complete secure https:// meeting link, or leave it blank.');}}
+ return {format,location,link};
 }
