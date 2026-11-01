@@ -12,7 +12,24 @@ export function seed(){return {version:1,user:null,requests:[],invites:[],events
 ]};}
 export function distance(a,b){const r=Math.PI/180;const dlat=(b.lat-a.lat)*r,dlon=(b.lon-a.lon)*r;const x=Math.sin(dlat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dlon/2)**2;return 6371*2*Math.atan2(Math.sqrt(x),Math.sqrt(Math.max(0,1-x)));}
 // Convert a future weekly wall-clock time using its IANA zone, including DST.
-export function nextMeeting(b,now=new Date()) {const [day,time]=b.slot.split(' ');const target=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].indexOf(day);const parts=new Intl.DateTimeFormat('en-CA',{timeZone:b.zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);const get=k=>Number(parts.find(p=>p.type===k).value);const base=new Date(Date.UTC(get('year'),get('month')-1,get('day')));const delta=(target-base.getUTCDay()+7)%7;const [h,m]=time.split(':').map(Number);for(const add of [delta,delta+7]){const wall=Date.UTC(base.getUTCFullYear(),base.getUTCMonth(),base.getUTCDate()+add,h,m);let stamp=wall;for(let i=0;i<4;i++){const p=new Intl.DateTimeFormat('en-GB',{timeZone:b.zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(stamp));const n=k=>Number(p.find(v=>v.type===k).value);const actual=Date.UTC(n('year'),n('month')-1,n('day'),n('hour'),n('minute'));stamp+=wall-actual;}if(stamp>now.getTime())return new Date(stamp);} }
+export function nextMeeting(b,now=new Date()) {
+ const [day,time]=b.slot.split(' '),target=weekdays.indexOf(day),[h,min]=time.split(':').map(Number);
+ const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:b.zone,year:'numeric',month:'2-digit',day:'2-digit'});
+ const p=fmt.formatToParts(now),get=k=>Number(p.find(v=>v.type===k).value);
+ let base=new Date(Date.UTC(get('year'),get('month')-1,get('day')));
+ if(b.firstDate&&b.firstDate>base.toISOString().slice(0,10))base=new Date(b.firstDate+'T00:00:00Z');
+ const delta=(target-base.getUTCDay()+7)%7;
+ for(let week=0;week<54;week++){
+  const wall=Date.UTC(base.getUTCFullYear(),base.getUTCMonth(),base.getUTCDate()+delta+week*7,h,min);
+  let stamp=wall;
+  const localParts=new Intl.DateTimeFormat('en-GB',{timeZone:b.zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+  const wallAt=t=>{const parts=localParts.formatToParts(new Date(t)),n=k=>Number(parts.find(v=>v.type===k).value);return Date.UTC(n('year'),n('month')-1,n('day'),n('hour'),n('minute'));};
+  for(let k=0;k<4;k++)stamp+=wall-wallAt(stamp);
+  // A local time skipped by a DST change cannot represent a meeting that week.
+  if(wallAt(stamp)===wall&&stamp>now.getTime())return new Date(stamp);
+ }
+ throw Error('Unable to calculate the next meeting.');
+}
 export function compatible(u,b){if(b.gender!==u.gender||b.language!==u.language)return false;if(u.format!=='Either'&&u.format!==b.format)return false;if(b.format==='In person'&&(!Number.isFinite(u.lat)||!Number.isFinite(u.lon)||distance(u,b)>u.radius))return false;const zone=u.zone||'America/Edmonton';const p=new Intl.DateTimeFormat('en-US',{timeZone:zone,weekday:'long',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(nextMeeting(b));const get=k=>p.find(x=>x.type===k).value;return u.slots.includes(`${get('weekday')} ${get('hour')}:${get('minute')}`);}
 export const occupied=(s,b)=>b.members.length+s.requests.filter(r=>r.band===b.id&&r.status==='offered').length;
 export function eligible(s,u,b){return b.approved&&b.open&&occupied(s,b)<5&&!b.members.some(m=>m.email===u.email)&&!s.requests.some(r=>r.email===u.email&&r.band===b.id&&['host-declined','declined','unsuitable','left'].includes(r.status))&&compatible(u,b);}
@@ -21,3 +38,18 @@ export function accept(s,id){const r=s.requests.find(r=>r.id===id);if(!r||r.stat
 export function confirm(s,id){const r=s.requests.find(r=>r.id===id);if(!r||r.status!=='offered')return false;const b=s.bands.find(b=>b.id===r.band);if(!b.approved||b.members.length>=5)return false;b.members.push({id:r.email,name:r.name,email:r.email});r.status='confirmed';if(b.members.length===3)b.started=new Date().toISOString();return true;}
 export function stage(b){return !b.approved?'Pending Staff Approval':(!b.open||b.members.length>=5)?'Full':b.members.length>=3?'Active':'Forming';}
 export function notify(s,to,subject,body){s.events.unshift({id:uid(),to,subject,body,date:new Date().toISOString()});}
+
+export const weekdays=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+export function scheduleValues(day,time,firstDate='',zone='America/Edmonton',now=new Date()){
+ if(!weekdays.includes(day)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))throw Error('Choose a meeting day and a valid start time.');
+ if(firstDate){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(firstDate))throw Error('Choose a valid first meeting date.');
+  const d=new Date(firstDate+'T12:00:00Z');
+  if(Number.isNaN(d.getTime())||d.toISOString().slice(0,10)!==firstDate)throw Error('Choose a valid first meeting date.');
+  if(weekdays[d.getUTCDay()]!==day)throw Error('The first meeting date must fall on your weekly meeting day.');
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
+  const get=k=>parts.find(p=>p.type===k).value;
+  if(firstDate<get('year')+'-'+get('month')+'-'+get('day'))throw Error('Choose today or a future first meeting date.');
+ }
+ return {slot:day+' '+time,firstDate};
+}
